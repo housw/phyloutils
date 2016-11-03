@@ -199,7 +199,12 @@ def download_assemblies(assembly2ftp, outdir):
         remote_folder = os.path.split(ftp_path)[-1]
         subprocess.check_call(['mkdir', '-p', local_folder])
 
-        ftp_folder = urllib2.urlopen(ftp_path)
+        try:
+            ftp_folder = urllib2.urlopen(ftp_path)
+        except ValueError as e:
+            print "[getGenomesFromGenbank]: ERROR: can NOT download %s using address: %s"%(assembly, ftp_path)
+            print "[getGenomesFromGenbank]: The error message is : %s"%e
+            continue
         for f in ftp_folder:
             # here convert the html content to text, and split into lines
             for line in html2text(f).split("\n"):
@@ -505,6 +510,56 @@ def hmmMarkerScanner(args):
         get_fasta_from_hmmsearch_result(out_hmm, out_orf, curr_outfolder)
 
 
+
+def rnammerMarkerScanner(args):
+    """ a wrapper function to call rnammer for rRNA scanning, for each genome
+        sequence in the input folder, it will scan the genome and found all rRNAs
+    """
+    rnammer = args.rnammer
+    fasta_folder = args.inputFastaFolder
+    kingdom = args.superkingdom
+    type = args.molecule
+    force = args.force
+    output_folder = args.outdir
+    prefix = args.prefix
+    subprocess.check_call(['mkdir', '-p', output_folder])
+
+
+    for fa in os.listdir(fasta_folder):
+        if not (fa.endswith('.fa') or fa.endswith('.fasta') or fa.endswith('.fas')):
+            print "[rnammerMarkerScanner]: %s is not a fasta file, pass"%fa
+            continue
+        if prefix:
+            filestem = prefix
+        else:
+            filestem = os.path.splitext(fa)[0]
+        curr_outfolder = os.path.join(output_folder, filestem)
+        subprocess.check_call(['mkdir', '-p', curr_outfolder])
+        input_fa = os.path.join(fasta_folder, fa)
+        out_rRNA = os.path.join(curr_outfolder, filestem+".fa")
+        out_gff = os.path.join(curr_outfolder, filestem+".gff")
+        out_hmm = os.path.join(curr_outfolder, filestem+".hmmsearch")
+
+        # get orf
+        print "[rnammerMarkerScanner]: getting rRNAs for %s ..."%fa
+        if os.path.exists(out_rRNA):
+            if not force:
+                print "[rnammerMarkerScanner]: rRNA file exists, nothing to do, \
+                                           use --force to override"
+                continue
+            else:
+                print "[rnammerMarkerScanner]: rRNA file for %s was override"%fa
+        subprocess.check_call([rnammer,
+                                '-S', kingdom,
+                                '-m', type,
+                                '-f', out_rRNA,
+                                '-gff', out_gff,
+                                '-h', out_hmm,
+                                input_fa
+                              ])
+
+
+
 def mergeEachMarkerProteinSet(args):
     """ given a list of marker names, concate all found marker proteins in each
         genome.
@@ -532,6 +587,121 @@ def mergeEachMarkerProteinSet(args):
                         fasta = SeqIO.read(os.path.join(input_folder, genome, f), 'fasta')
                         oh.write(">"+genome+"\n")
                         oh.write(str(fasta.seq)+"\n")
+
+
+def mergerRNASet(args):
+    """ given the name of marker rRNA, concate this marker rRNA for all genomes.
+    """
+    input_folder = args.inputUmbrellaFolder
+    marker = args.molecule+"_rRNA"
+    strategy = args.strategy       # all or best
+    output_folder = args.outdir
+    length_cutoff = args.length_cutoff
+    numberOfNs = args.numberOfNs
+    subprocess.check_call(['mkdir', '-p', output_folder])
+
+    # merge marker rRNAs
+    with open(os.path.join(output_folder, marker+"_"+strategy+".fa"), "w") as oh:
+        for genome_folder in os.listdir(input_folder):
+            if not os.path.isdir(os.path.join(input_folder, genome_folder)):
+                continue
+            for f in os.listdir(os.path.join(input_folder, genome_folder)):
+                if f.endswith(".fa") or f.endswith(".fasta") or f.endswith(".fas"):
+                    genome_name = genome_folder
+                    marker_seq = os.path.join(input_folder, genome_folder, f)
+                    if strategy == 'best':
+                        best = None
+                        best_score = 0
+                        for rec in SeqIO.parse(marker_seq, "fasta"):
+                            if marker in rec.description:
+                                if len(rec.seq) < length_cutoff:
+                                    continue
+                                if rec.seq.count('N') + rec.seq.count('n') >= numberOfNs:
+                                    continue
+                                if not best:
+                                    best = rec
+                                    best_score = float(rec.description.split("=")[-1])
+                                else:
+                                    current = rec
+                                    current_score = float(rec.description.split("=")[-1])
+                                    if current_score > best_score:
+                                        best_score = current_score
+                                        best = current
+                        if best:
+                            if best.seq.count('N') >=50:
+                                continue
+                            oh.write(">"+genome_name+"\n")
+                            oh.write(str(best.seq)+"\n")
+                    else:
+                        count = 0
+                        for rec in SeqIO.parse(marker_seq, 'fasta'):
+                            seq_set = set()
+                            if marker in rec.description:
+                                if rec.seq.count('N') + rec.seq.count('n') >= numberOfNs:
+                                    continue
+                                if len(rec.seq) < length_cutoff:
+                                    continue
+                                if str(rec.seq) in seq_set:
+                                    continue
+                                count += 1
+                                seq_set.add(str(rec.seq))
+                                oh.write(">"+genome_name+"_"+str(count)+"\n")
+                                oh.write(str(rec.seq)+"\n")
+
+
+def runSSUAlignAndMask(args):
+    """ run ssu-align and ssu-mask for input sequences
+    """
+    ssu_align = args.ssu_align
+    ssu_mask = args.ssu_mask
+    input_fasta = args.inputFastaFile
+    force = args.force
+    prefix = args.prefix
+    kingdom = args.kingdom
+    no_align = args.no_align
+    no_search = args.no_search
+    output_RNA = args.output_RNA
+    output_stk = args.output_stk
+
+    if prefix:
+        output_folder = prefix+"_ssu-align"
+    else:
+        basename = os.path.basename(input_fasta)
+        filestem = os.path.splitext(basename)[0]
+        output_folder = filestem + "_ssu-align"
+
+    # do ssu alignment
+    cmd = [ssu_align, '-n', kingdom]
+    if force:
+        cmd.append('-f')
+    if not output_RNA:
+        cmd.append('--dna')
+    if no_align:
+        cmd.append('--no-align')
+    if no_search:
+        cmd.append('--no-search')
+    cmd.append(input_fasta)
+    cmd.append(output_folder)
+    try:
+        p = subprocess.Popen(cmd)
+        p.wait()
+    except Exception as e:
+        print "Error raised at running runSSUAlignAndMask:%s"%e
+        sys.exit(1)
+
+    # do mask
+    cmd=[ssu_mask]
+    if not output_RNA:
+        cmd.append('--dna')
+    if not output_stk:
+        cmd.append('--afa')
+    cmd.append(output_folder)
+    try:
+        p = subprocess.Popen(cmd)
+        p.wait()
+    except Exception as e:
+        print "Error raised at running runSSUAlignAndMask:%s"%e
+        sys.exit(1)
 
 
 def runMSAonMarkers(args):
@@ -625,21 +795,27 @@ def concatMarkersforEachGenome(args):
             accum_start = stop
 
 
-def convertFasta2Phylip(input_fasta, output_prefix, format='phylip-relaxed'):
+def convertFasta2Phylip(input_fasta, output_prefix, format='phylip-sequential'):
     """ convert input_fasta to phylip-relaxed format using Biopython
     """
     AlignIO.convert(input_fasta, 'fasta', output_prefix+".phy", format)
 
 
 def convertMSFtoPhylip(args):
-    """convert multiple sequence alignments in multiple fasta format to phylip-relaxed format
+    """convert multiple sequence alignments in multiple fasta format to phylip-sequential format
     """
     input_folder = args.inputSuperAlignmentFolder
     suffix = args.suffix
+    phylip_relaxed = args.phylip_relaxed
+
     if args.outdir:
         output_folder = args.outdir
     else:
         output_folder = input_folder
+
+    outfmt = "phylip-sequential"
+    if phylip_relaxed:
+        outfmt = 'phylip-relaxed'
 
     # convert to phylip-relaxed format
     for f in os.listdir(input_folder):
@@ -647,10 +823,10 @@ def convertMSFtoPhylip(args):
             input_fasta = os.path.join(input_folder, f)
             basename = os.path.splitext(f)[0]
             output_prefix = os.path.join(output_folder, basename)
-            print "[convertMSFtoPhylip]: converting %s to phylip format ..."%f
+            print "[convertMSFtoPhylip]: converting %s to %s format ..."%(f, outfmt)
 
             # it's compulsory to use phylip-sequential format for PartitionFinderProtein
-            convertFasta2Phylip(input_fasta, output_prefix, format='phylip-sequential')
+            convertFasta2Phylip(input_fasta, output_prefix, format=outfmt)
 
 
 def runPartitionFinderProtein(args):
@@ -794,6 +970,52 @@ def runRAxML(args):
                                  suffix, structure, partition, threads)
 
 
+def replaceNameInTree(args):
+    """ replace the shortname back to scientificname in the tree file, to make
+        it easy for publication
+    """
+    inputTreeFile = args.inputTreeFile
+    lookUpTable = args.lookUpTable
+    prefix = args.prefix
+
+    if prefix:
+        output_file = prefix+"_sci.tre"
+    else:
+        basename = os.path.basename(inputTreeFile)
+        filestem = os.path.splitext(basename)[0]
+        output_file = filestem+"_sci.nwk"
+
+    # read in lookUpTable
+    short2sci = {} # {shortname: scientificname}
+    with open(lookUpTable, "r") as ih:
+        for line in ih:
+            if line.startswith('#'):
+                continue
+            line = line.strip().split("\t")
+            if len(line) <=2:
+                print "[replaceNameInTree]: WARNING: no scientificname were found here: %s"%("\t".join(line))
+                continue
+            shortname = line[1].strip()
+            scientificname = line[2].strip()
+            short2sci[shortname] = scientificname
+
+    used = {} # {shortname: True} record this has been replaced or not
+    with open(inputTreeFile, "r") as ih, open(output_file, "w") as oh:
+        for line in ih:
+            for short, sci in short2sci.iteritems():
+                # a taxon name should followed by other attributes like branchlength, seperate by colon
+                if short+":" in line:
+                    if short not in used:
+                        used[short] = True
+                        #print line
+                        line = line.replace(short+":", sci+":")
+                    else:
+                        print "[replaceNameInTree]: WARNING: %s has been used, and should be unique in tree!"%short
+                        continue
+        oh.write(line)
+
+
+
 def main():
 
     # main parser
@@ -883,7 +1105,9 @@ def main():
                                    help="input folder that contains all fasta files")
     parser_renameFastaFile.add_argument("lookupTable",
                                    help='tab-deliminated lookup table to convert \
-                                   old names to new names, in "old tab new" format')
+                                   old names to new names, in "old tab new" format,\
+                                   if more than two columns were detected in the \
+                                   lookup table, only the first two columns will be used.')
     parser_renameFastaFile.add_argument('-o', '--outdir',
                                    help="output directory, default='renamedFasta'",
                                    default="renamedFasta")
@@ -893,14 +1117,15 @@ def main():
     # ---------------- #
     # hmmMarkerScanner #
     # ---------------- #
-    hmmMarkerScanner_desc="scan markers using hmmsearch, for each fasta files in \
+    hmmMarkerScanner_desc="scan markers using hmmsearch, for each fasta file in \
                                    given folder, a python implementation of AMPHORE2."
     parser_hmmMarkerScanner = subparsers.add_parser('hmmMarkerScanner',
                                    parents=[parent_parser],
                                    help=hmmMarkerScanner_desc,
                                    description=hmmMarkerScanner_desc)
     parser_hmmMarkerScanner.add_argument("inputFastaFolder",
-                                   help="input folder that contains all fasta files")
+                                   help="input folder that contains all genome \
+                                   fasta files")
     parser_hmmMarkerScanner.add_argument("inputMarkerFile",
                                    help='input marker file that contains hmm models')
     parser_hmmMarkerScanner.add_argument('-e', '--evalue', default=1e-7,
@@ -911,6 +1136,36 @@ def main():
     parser_hmmMarkerScanner.add_argument('-f', '--force',
                                    help="force to override previous result?")
     parser_hmmMarkerScanner.set_defaults(func=hmmMarkerScanner)
+
+
+    # -------------------- #
+    # rnammerMarkerScanner #
+    # -------------------- #
+    rnammerMarkerScanner_desc="scan rRNA markers using rnammer, for each fasta \
+                                   file in given folder."
+    parser_rnammerMarkerScanner = subparsers.add_parser('rnammerMarkerScanner',
+                                   parents = [parent_parser],
+                                   help = rnammerMarkerScanner_desc,
+                                   description = rnammerMarkerScanner_desc)
+    parser_rnammerMarkerScanner.add_argument("inputFastaFolder",
+                                   help = "input folder that contains all genome \
+                                   fasta files")
+    parser_rnammerMarkerScanner.add_argument('-S', '--superkingdom', help="superkingdom, choose arc/bac/euk, \
+                                   default='bac'",
+                                   choices=['arc', 'bac', 'euk'], default='bac')
+    parser_rnammerMarkerScanner.add_argument('-m', '--molecule', help='type of rRNAs, can be any \
+                                   combination of the three, \
+                                   default is "tsu,lsu,ssu",', default='tsu,lsu,ssu',
+                                   choices=['<tsu,lsu,ssu>', '<tsu,lsu>', '<tsu,ssu>', '<lsu,ssu>',
+                                   '<tsu>', '<lsu>', '<ssu>'])
+    parser_rnammerMarkerScanner.add_argument('-o', '--outdir', help='output directory, \
+                                   default=ScannedrRNAs', default="ScannedrRNAs")
+    parser_rnammerMarkerScanner.add_argument('-f', '--force',
+                                   help="force to override previous result?")
+    parser_rnammerMarkerScanner.add_argument('-r', '--rnammer', help='path to rnammer excutable, \
+                                   default=~/Software/Module_Annotation/rnammer/rnammer-1.2/rnammer',
+                                   default='/home/hou/Software/Module_Annotation/rnammer/rnammer-1.2/rnammer')
+    parser_rnammerMarkerScanner.set_defaults(func=rnammerMarkerScanner)
 
 
     # ------------------------- #
@@ -931,6 +1186,69 @@ def main():
                                    help="output directory, default='MergedMarkerProteinSet'",
                                    default="MergedMarkerProteinSet")
     parser_mergeEachMarkerProteinSet.set_defaults(func=mergeEachMarkerProteinSet)
+
+
+    # ------------ #
+    # mergerRNASet #
+    # ------------ #
+    mergerRNASet_desc="merge marker rRNAs found in each genome into one file,\
+                                   given an umbrella folder and rRNA sequences in genome subfolders."
+    parser_mergerRNASet = subparsers.add_parser('mergerRNASet',
+                                   parents=[parent_parser],
+                                   help=mergerRNASet_desc,
+                                   description=mergerRNASet_desc)
+    parser_mergerRNASet.add_argument("inputUmbrellaFolder",
+                                   help="input folder that contains all genome subfolders,\
+                                   where extracted marker rRNAs were inside")
+    parser_mergerRNASet.add_argument("-m", '--molecule', default='16s',
+                                   choices=['5s', '16s', '23s', '8s', '18s', '28s'],
+                                   help='molecule type you want to merge, default=16s')
+    parser_mergerRNASet.add_argument('-s', '--strategy', default='all',
+                                   choices = ['all', 'best'], help = 'strategy to select\
+                                   marker rRNA when multiple markers were found, default=all')
+    parser_mergerRNASet.add_argument('-l', '--length_cutoff', default=1200, type=int,
+                                   help='length cutoff, to exclude short sequences, default=1200')
+    parser_mergerRNASet.add_argument('-n', '--numberOfNs', default=50, type=int,
+                                   help='maximum Ns allowed in the sequences, default=50')
+    parser_mergerRNASet.add_argument('-o', '--outdir',
+                                   help="output directory, default='MergedrRNASet'",
+                                   default="MergedrRNASet")
+    parser_mergerRNASet.set_defaults(func=mergerRNASet)
+
+
+    # ------------------ #
+    # runSSUAlignAndMask #
+    # ------------------ #
+    runSSUAlignAndMask_desc = "run ssu-align and mask for input rRNA sequences"
+    parser_runSSUAlignAndMask = subparsers.add_parser('runSSUAlignAndMask',
+                                   parents=[parent_parser],
+                                   help=runSSUAlignAndMask_desc,
+                                   description=runSSUAlignAndMask_desc)
+    parser_runSSUAlignAndMask.add_argument('inputFastaFile', help='input fasta\
+                                   file contains multiple rRNA sequences')
+    parser_runSSUAlignAndMask.add_argument('-f', '--force', action='store_true',
+                                   help='override outputs')
+    parser_runSSUAlignAndMask.add_argument('--no_align', action='store_true',
+                                   help='only search target \
+                                   sequence file for hits, skip alignment step')
+    parser_runSSUAlignAndMask.add_argument('--no_search', action='store_true',
+                                   help='only align  target \
+                                   sequence file, skip initial search step')
+    parser_runSSUAlignAndMask.add_argument('--output_RNA', action='store_true',
+                                   help='output alignment as RNA, default is DNA')
+    parser_runSSUAlignAndMask.add_argument('--output_stk', action='store_true',
+                                   help='output stockholm alignments, \
+                                   default is fasta alignments')
+    parser_runSSUAlignAndMask.add_argument('--kingdom', default='bacteria',
+                                   choices=['archaea', 'bacteria', 'eukarya'],
+                                   help='kingdom to search and align to, default is bacteria')
+    parser_runSSUAlignAndMask.add_argument('--ssu_align', help='path to ssu-align excutable, \
+                                   default=~/Software/Module_Phylogeny/ssu-align-0.1.1/src/ssu-align',
+                                   default='/home/hou/Software/Module_Phylogeny/ssu-align-0.1.1/src/ssu-align')
+    parser_runSSUAlignAndMask.add_argument('--ssu_mask', help='path to ssu-mask excutable, \
+                                   default=~/Software/Module_Phylogeny/ssu-align-0.1.1/src/ssu-mask',
+                                   default='/home/hou/Software/Module_Phylogeny/ssu-align-0.1.1/src/ssu-mask')
+    parser_runSSUAlignAndMask.set_defaults(func=runSSUAlignAndMask)
 
 
 
@@ -983,6 +1301,9 @@ def main():
                                    help="input folder contains supermatrix alignments")
     parser_convertMSFtoPhylip.add_argument('-o', '--outdir',
                                    help='output directory, default is input directory')
+    parser_convertMSFtoPhylip.add_argument('--phylip_relaxed', action='store_true',
+                                   help='output phylip-relaxed\
+                                   format, default is phylip-sequential')
     parser_convertMSFtoPhylip.add_argument('-s', '--suffix', default='_supermatrix.msf',
                                    help='suffix to identify input super alignment file, default=_supermatrix.msf')
     parser_convertMSFtoPhylip.set_defaults(func=convertMSFtoPhylip)
@@ -1036,6 +1357,26 @@ def main():
                                    help='number of threads, default=30')
     parser_runRAxML.set_defaults(func=runRAxML)
 
+    # ----------------- #
+    # replaceNameInTree #
+    # ----------------- #
+    replaceNameInTree_desc="replace shortname back to scientific names in input tree file,\
+    it will only replace the shortname strings found the tree file, should not change \
+    anything else like topology/branchlength/bootstraps of the tree."
+    parser_replaceNameInTree = subparsers.add_parser('replaceNameInTree',
+                                   parents = [parent_parser],
+                                   help=replaceNameInTree_desc,
+                                   description=replaceNameInTree_desc)
+    parser_replaceNameInTree.add_argument('inputTreeFile',
+                                   help="input tree file generated using RAxML, in newick format")
+    parser_replaceNameInTree.add_argument('lookUpTable',
+                                   help='tab-deliminated lookup table to convert \
+                                   short names to scientific names, this is the same file \
+                                   used in renameFastaFile, the second column should \
+                                   be shortname and third column should be scientificname, \
+                                   no comma/space/(/)/colon were allowed in scientificname.')
+
+    parser_replaceNameInTree.set_defaults(func=replaceNameInTree)
 
 
     # ----------------------- #
