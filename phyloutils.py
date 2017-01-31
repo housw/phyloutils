@@ -47,8 +47,11 @@ def subparser_usage(argv, parser):
                     print >>sys.stderr, subparser.format_help()
                     found = 1
     if not found:
-        print >>sys.stderr, "\n\nERROR:%s is not a valid command!!!\n\n" % cmd
-        main_usage(parser)
+        if cmd in ("-v", "--version", "-h", "--help"):
+            args = parser.parse_args()
+        else:
+            print >>sys.stderr, "\n\nERROR:%s is not a valid command!!!\n\n" % cmd
+            main_usage(parser)
 
 
 def display_help(argv, parser):
@@ -976,6 +979,7 @@ def replaceNameInTree(args):
     """
     inputTreeFile = args.inputTreeFile
     lookUpTable = args.lookUpTable
+    format = args.format
     prefix = args.prefix
 
     if prefix:
@@ -983,7 +987,7 @@ def replaceNameInTree(args):
     else:
         basename = os.path.basename(inputTreeFile)
         filestem = os.path.splitext(basename)[0]
-        output_file = filestem+"_sci.nwk"
+        output_file = filestem+"_sci.tre"
 
     # read in lookUpTable
     short2sci = {} # {shortname: scientificname}
@@ -1001,18 +1005,28 @@ def replaceNameInTree(args):
 
     used = {} # {shortname: True} record this has been replaced or not
     with open(inputTreeFile, "r") as ih, open(output_file, "w") as oh:
-        for line in ih:
-            for short, sci in short2sci.iteritems():
-                # a taxon name should followed by other attributes like branchlength, seperate by colon
-                if short+":" in line:
-                    if short not in used:
-                        used[short] = True
-                        #print line
-                        line = line.replace(short+":", sci+":")
+        if format == 'newick':
+            for line in ih:
+                for short, sci in short2sci.iteritems():
+                    # a taxon name should followed by other attributes like branchlength, seperate by colon
+                    if short+":" in line:
+                        if short not in used:
+                            used[short] = True
+                            #print line
+                            line = line.replace(short+":", sci+":")
                     else:
                         print "[replaceNameInTree]: WARNING: %s has been used, and should be unique in tree!"%short
                         continue
-        oh.write(line)
+                oh.write(line)
+        else:
+            for line in ih:
+                for short, sci in short2sci.iteritems():
+                    if short in line:
+                        line = line.replace(short, sci)
+                oh.write(line)
+
+        print "[replaceNameInTree]: Please check the names and manually correct wrong names!!! "
+
 
 
 
@@ -1020,7 +1034,7 @@ def main():
 
     # main parser
     parser = argparse.ArgumentParser(description="A set of subcommands for phylogenetic computation")
-    parser.add_argument("-v", "--version", action="version", version="%(prog)s 1.0")
+    parser.add_argument("-v", "--version", action="version", version="%(prog)s 0.0.1")
 
 
     # parent parser, to specify shared arguments, inherited by subparsers
@@ -1368,7 +1382,9 @@ def main():
                                    help=replaceNameInTree_desc,
                                    description=replaceNameInTree_desc)
     parser_replaceNameInTree.add_argument('inputTreeFile',
-                                   help="input tree file generated using RAxML, in newick format")
+                                   help="input tree file generated using RAxML, in newick/nexus format")
+    parser_replaceNameInTree.add_argument('-f', "--format", choices=['newick', 'nexus'],
+                                   help="input tree format, default=newick", default='newick')
     parser_replaceNameInTree.add_argument('lookUpTable',
                                    help='tab-deliminated lookup table to convert \
                                    short names to scientific names, this is the same file \
