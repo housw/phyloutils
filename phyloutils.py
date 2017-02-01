@@ -67,6 +67,13 @@ def display_help(argv, parser):
         pass
 
 
+class SubCommandError(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
+
+
 def html2text(strText):
     """
         This is a function to convert html file into plain text. Please credit
@@ -294,6 +301,49 @@ def getGenomesFromGenbank(args):
         download_assemblies(assembly2ftp, args.outdir)
 
 
+def generateShortNameTable(args):
+    """ generate a tab-deliminated lookUpTable of accession numbers and
+        specie names
+    """
+    input_file = args.input_file
+    outdir = args.outdir
+    suffix = args.suffix
+    prefix = args.prefix
+
+    def _clean_name(sciName):
+        """ replace characters to underscores or empty
+        """
+        sciName = sciName.replace(" ", "_").replace("'", "").replace("-", "_")
+        sciName = sciName.replace("/", "_").replace("=", "_")
+        sciName = sciName.replace("[", "").replace("]", "")
+        sciName = sciName.replace("(", "_").replace(")", "_")
+        sciName = sciName.replace("___", "_" ).replace("__", "_")
+        return sciName
+
+    # save all the names
+    names = set()
+
+    if prefix:
+        output_file = prefix+"_shortNames.tab"
+    else:
+        basename = os.path.basename(input_file)
+        filestem = os.path.splitext(basename)[0]
+        output_file = filestem+"_shortNames.tab"
+
+    # read in genome assembly report file
+    with open(input_file, "r") as ih, open(output_file, "w") as oh:
+        _ = ih.readline()
+        for line in ih:
+            line = line.strip().split("\t")
+            sciName = line[0].strip()
+            sciName = _clean_name(sciName)
+            accession = line[7].strip()
+            sciName += "_" + accession
+            accession += suffix
+
+            oh.write(accession+"\t"+sciName+"\n")
+
+
 def mergeGenbankGenomes(args):
     """ given the genbank genome records downloaded using getGenomesFromGenbank,
         merge fasta records for each assembly into one fasta record.
@@ -327,8 +377,6 @@ def mergeGenbankGenomes(args):
                         print "No genome fna was found for %s"%genome_name
 
 
-
-
 def renameFastaFile(args):
     """given an input folder with fasta files inside, rename each fasta file and
        it's header name, accroding to the lookup table
@@ -336,6 +384,7 @@ def renameFastaFile(args):
     input_folder = args.inputFastaFolder
     lookupTable = args.lookupTable
     output_folder = args.outdir
+    length = args.length
     subprocess.check_call(['mkdir', '-p', output_folder])
 
 
@@ -349,7 +398,7 @@ def renameFastaFile(args):
             line = line.strip().split("\t")
             k, v = line[0], line[1]
             assert v not in newNames, "repeat new name was not allowed: %s"%v
-            assert len(v) <= 9, "the length of %s was more than 9!"%v
+            assert len(v) <= length, "the length of %s was more than %d!"%(v, length)
             newNames.add(v)
             lookup_dict[k] = v
 
@@ -458,7 +507,7 @@ def get_fasta_from_hmmsearch_result(hmmsearch_domtblout, query_fasta, output_fol
             oh.write(str(query2fasta[query])+"\n")
 
 
-def hmmMarkerScanner(args):
+def AMPHORE2HmmMarkerScanner(args):
     """ a simplified python implementation of MarkerScanner.pl of AMPHORE2, given
         a folder with fasta sequences inside, a hmm file with hmm models inside,
         search markers within input fasta sequences
@@ -473,7 +522,7 @@ def hmmMarkerScanner(args):
 
     for fa in os.listdir(fasta_folder):
         if not (fa.endswith('.fa') or fa.endswith('.fasta') or fa.endswith('.fas')):
-            print "[hmmMarkerScanner]: %s is not a fasta file, pass"%fa
+            print "[AMPHORE2HmmMarkerScanner]: %s is not a fasta file, pass"%fa
             continue
         filestem = os.path.splitext(fa)[0]
         curr_outfolder = os.path.join(output_folder, filestem)
@@ -483,10 +532,10 @@ def hmmMarkerScanner(args):
         out_hmm = os.path.join(curr_outfolder, filestem+".hmmsearch")
 
         # get orf
-        print "[hmmMarkerScanner]: getting orfs of %s ..."%fa
+        print "[AMPHORE2HmmMarkerScanner]: getting orfs of %s ..."%fa
         if os.path.exists(out_orf):
             if not force:
-                print "[hmmMarkerScanner]: orf exists, nothing to do, \
+                print "[AMPHORE2HmmMarkerScanner]: orf exists, nothing to do, \
                                            use --force to override"
                 continue
         subprocess.check_call(['getorf',
@@ -496,7 +545,7 @@ def hmmMarkerScanner(args):
                                 '-minsize', '100'
                               ])
         # run hmmsearch
-        print "[hmmMarkerScanner]: hmmsearch of markers for %s ..."%fa
+        print "[AMPHORE2HmmMarkerScanner]: hmmsearch of markers for %s ..."%fa
         subprocess.check_call(['hmmsearch',
                                 '-Z', '5000',
                                 '--cpu', '40',
@@ -509,7 +558,7 @@ def hmmMarkerScanner(args):
                               ])
 
         # get protein fasta belonging to each marker
-        print "[hmmMarkerScanner]: write marker proteins for %s ..."%fa
+        print "[AMPHORE2HmmMarkerScanner]: write marker proteins for %s ..."%fa
         get_fasta_from_hmmsearch_result(out_hmm, out_orf, curr_outfolder)
 
 
@@ -703,8 +752,8 @@ def runSSUAlignAndMask(args):
         p = subprocess.Popen(cmd)
         p.wait()
     except Exception as e:
-        print "Error raised at running runSSUAlignAndMask:%s"%e
-        sys.exit(1)
+        err = "[runSSUAlignAndMask]: Error raised at running runSSUAlignAndMask:%s"%e
+        raise SubCommandError(err)
 
 
 def runMSAonMarkers(args):
@@ -738,8 +787,8 @@ def runMSAonMarkers(args):
                                         ])
                 trim.wait()
             except Exception as e:
-                print "Error raised at runMSAonMarkers: %s"%e
-
+                err = "[runMSAonMarkers]: Error raised at runMSAonMarkers: %s"%e
+                raise SubCommandError(err)
 
 def concatMarkersforEachGenome(args):
     """given a folder with marker protein alignments inside, concatenate markers
@@ -894,8 +943,8 @@ search = greedy;
                          ])
         p.wait()
     except Exception as e:
-        print "[runPartitionFinderProtein]:Error raised at running PartitionFinderProtein:%s"%e
-
+        err = "[runPartitionFinderProtein]:Error raised at running PartitionFinderProtein:%s"%e
+        raise SubCommandError(err)
 
 
 def runRAxML_rapid_bootstrap(raxml, alignment, model, bootstraps, outgroup,
@@ -913,8 +962,8 @@ def runRAxML_rapid_bootstrap(raxml, alignment, model, bootstraps, outgroup,
         p = subprocess.Popen(command)
         p.wait()
     except Exception as e:
-        print "Error raised at runRAxML_rapid_bootstrap:%s"%e
-        sys.exit(1)
+        err = "[runRAxML_rapid_bootstrap]: Error raised at runRAxML_rapid_bootstrap:%s"%e
+        raise SubCommandError(err)
 
 def runRAxML_slow_bootstrap(raxml, alignment, model, bootstraps, outgroup,
                             suffix, structure, partition, threads):
@@ -934,7 +983,8 @@ def runRAxML_slow_bootstrap(raxml, alignment, model, bootstraps, outgroup,
         p1 = subprocess.Popen(command)
         p1.wait()
     except Exception as e:
-        print "Error raised at step1 of runRAxML_slow_bootstrap:%s"%e
+        err = "Error raised at step1 of runRAxML_slow_bootstrap:%s"%e
+        raise SubCommandError(err)
 
     # step2: 100 bootstrap search
     #/home/hou/Software/RAxML/standard-RAxML/raxmlHPC-PTHREADS -m PROTGAMMAILGF -p 12345 -b 12345 -# 100 -s tcoffee_mafft_fileset_trimAl.phy -T 21 -n PROTGAMMAILGF_100BS
@@ -942,7 +992,6 @@ def runRAxML_slow_bootstrap(raxml, alignment, model, bootstraps, outgroup,
     # step3: projection, draw bipartitions on the best ML tree using bootstrap replicate trees
     # for unrooted trees the correct representation is actually the one with support values assigned to branches and not nodes
     #/home/hou/Software/RAxML/standard-RAxML/raxmlHPC-PTHREADS -m PROTGAMMAILGF -p 12345 -f b -t RAxML_bestTree.PROTGAMMAILGF_20ML -z RAxML_bootstrap.PROTGAMMAILGF_100BS -n PROTGAMMAILGF_projection
-
 
 
 def runRAxML(args):
@@ -968,7 +1017,8 @@ def runRAxML(args):
         runRAxML_rapid_bootstrap(raxml, alignment, model, bootstraps, outgroup,
                                  suffix, structure, partition, threads)
     else:
-        raise Exception('Not implemented yet')
+        err = "[runRAxML]: Not implemented yet!!!"
+        raise SubCommandError(err)
         runRAxML_slow_bootstrap(raxml, alignment, model, bootstraps, outgroup,
                                  suffix, structure, partition, threads)
 
@@ -1028,6 +1078,161 @@ def replaceNameInTree(args):
         print "[replaceNameInTree]: Please check the names and manually correct wrong names!!! "
 
 
+def construct_prodigal_cmds(prodigal, input_fasta, output_prefix,
+                            output_fmt='gff', write_proteins=None, write_DNAs=None,
+                            m=None, c=None, n=None, *args, **kwargs):
+    """ construct prodigal commands
+    """
+    template = '%s -i %s -o %s'%(prodigal, input_fasta, output_prefix+"."+output_fmt)
+
+    command = template.split(" ")
+    if write_proteins:
+        command.extend(['-a', output_prefix+".faa"])
+    if write_DNAs:
+        command.extend(['-d', output_prefix+".fsa"])
+    if m:
+        command.extend(['-m'])
+    if c:
+        command.extend(['-c'])
+    if n:
+        command.extend(['-c'])
+
+    try:
+        p1 = subprocess.Popen(command)
+        p1.wait()
+    except Exception as e:
+        err = "[runProdigal]: Error raised when running prodigal:%s"%e
+        raise SubCommandError(err)
+
+
+def runProdigal(args):
+    """ wrapper function of prodigal
+    """
+    prodigal = args.prodigal
+    input_file_or_folder = args.input_file_or_folder
+    suffix = args.suffix
+
+    output_fmt = args.format
+    m = args.m
+    c = args.c
+    n = args.n
+
+    write_proteins = not args.not_write_proteins
+    write_DNAs = not args.not_write_DNAs
+
+    # create outdir
+    subprocess.check_call(['mkdir', '-p', args.outdir])
+
+    if os.path.isdir(input_file_or_folder):
+        for f in os.listdir(input_file_or_folder):
+            if f.endswith(suffix):
+                if args.prefix:
+                    prefix = os.path.join(args.outdir, args.prefix)
+                else:
+                    prefix = os.path.join(args.outdir, os.path.splitext(f)[0])
+
+                # run prodigal
+                input_fasta = os.path.join(input_file_or_folder, f)
+                construct_prodigal_cmds(prodigal, input_fasta, prefix, output_fmt,
+                                        write_proteins, write_DNAs, m, c, n)
+
+    else:
+        if args.prefix:
+            prefix = os.path.join(args.outdir, args.prefix)
+        else:
+            basename = os.path.basename(input_file_or_folder)
+            prefix = os.path.join(args.outdir, os.path.splitext(basename)[0])
+
+        # run prodigal
+        input_fasta = input_file_or_folder
+        construct_prodigal_cmds(prodigal, input_fasta, prefix, output_fmt,
+                                write_proteins, write_DNAs, m, c, n)
+
+
+def construct_hmmsearch_cmds(hmmsearch, hmm_file, input_fasta, output_prefix,
+                            evalue=1e-7, dom_evalue=1e-7,
+                            write_tblout=None, write_domtblout=None,
+                            write_pfamtblout=None,
+                            acc=None, noali=None, cpu=10, *args, **kwargs):
+    """ construct hmmsearch commands
+    """
+    # hmmsearch -o /dev/null -Z 5000 -E 1e-7 --domE 1e-7 --domtblout output_dom_file \
+    # --tblout output_seq_file --pfamtblout output_pfam_file hmm_file input_fasta
+    template = '%s -o /dev/null -Z 5000 -E %s --domE %s --cpu %s'%(
+        hmmsearch, str(evalue), str(dom_evalue), str(cpu))
+
+    command = template.split(" ")
+    if write_tblout:
+        command.extend(['--tblout', output_prefix+".tblout"])
+    if write_domtblout:
+        command.extend(['--domtblout', output_prefix+".domtblout"])
+    if write_pfamtblout:
+        command.extend(['--pfamtblout', output_prefix+".pfamtblout"])
+    if acc:
+        command.extend(['--acc'])
+    if noali:
+        command.extend(['--noali'])
+
+    command.extend([hmm_file, input_fasta])
+
+    try:
+        p1 = subprocess.Popen(command)
+        p1.wait()
+    except Exception as e:
+        err = "[runHmmsearch]: Error raised when running hmmsearch:%s"%e
+        raise SubCommandError(err)
+
+
+def runHmmsearch(args):
+    """wrapper function of hmmsearch
+    """
+    hmmsearch = args.hmmsearch
+    input_file_or_folder = args.input_file_or_folder
+    hmm_file = args.input_hmm_file
+    outdir = args.outdir
+    suffix = args.suffix
+    evalue = args.evalue
+    dom_evalue = args.dom_evalue
+    write_tblout = not args.not_write_tblout
+    write_domtblout = not args.not_write_domtblout
+    write_pfamtblout = not args.not_write_pfamtblout
+    acc = args.acc
+    noali = args.noali
+    cpu = args.cpu
+
+    # create outdir
+    subprocess.check_call(['mkdir', '-p', outdir])
+
+    if os.path.isdir(input_file_or_folder):
+        for f in os.listdir(input_file_or_folder):
+            if f.endswith(suffix):
+                if args.prefix:
+                    prefix = os.path.join(args.outdir, args.prefix)
+                else:
+                    prefix = os.path.join(args.outdir, os.path.splitext(f)[0])
+
+                # run hmmsearch
+                input_fasta = os.path.join(input_file_or_folder, f)
+                construct_hmmsearch_cmds(hmmsearch, hmm_file, input_fasta, prefix,
+                                         evalue, dom_evalue, write_tblout,
+                                         write_domtblout, write_pfamtblout,
+                                         acc, noali, cpu)
+
+    else:
+        if args.prefix:
+            prefix = os.path.join(args.outdir, args.prefix)
+        else:
+            basename = os.path.basename(input_file_or_folder)
+            prefix = os.path.join(args.outdir, os.path.splitext(basename)[0])
+
+        # run hmmsearch
+        input_fasta = input_file_or_folder
+        construct_hmmsearch_cmds(hmmsearch, hmm_file, input_fasta, prefix,
+                                 evalue, dom_evalue, write_tblout,
+                                 write_domtblout, write_pfamtblout,
+                                 acc, noali, cpu)
+
+
 
 
 def main():
@@ -1066,6 +1271,27 @@ def main():
                                    help="output directory, default='GenbankGenomes'",
                                    default="GenbankGenomes")
     parser_getGenomesFromGenbank.set_defaults(func=getGenomesFromGenbank)
+
+
+    # ---------------------- #
+    # generateShortNameTable #
+    # ---------------------- #
+    generateShortNameTable_desc="generate tab-deliminated shortName table from \
+                                   NCBI Genome Assembly Report, manually corrections \
+                                   might be needed."
+    parser_generateShortNameTable = subparsers.add_parser('generateShortNameTable',
+                                   parents=[parent_parser],
+                                   help=generateShortNameTable_desc,
+                                   description=generateShortNameTable_desc)
+    parser_generateShortNameTable.add_argument('input_file',
+                                   help='expored assembly report from NCBI Genome')
+    parser_generateShortNameTable.add_argument('-o', '--outdir',
+                                   help="output directory, default='./'",
+                                   default="./")
+    parser_generateShortNameTable.add_argument('-s', '--suffix',
+                                   help="suffix will be appended to the accession\
+                                   number, default='.mfa'", default='.mfa')
+    parser_generateShortNameTable.set_defaults(func=generateShortNameTable)
 
 
     # ------------------- #
@@ -1125,31 +1351,34 @@ def main():
     parser_renameFastaFile.add_argument('-o', '--outdir',
                                    help="output directory, default='renamedFasta'",
                                    default="renamedFasta")
+    parser_renameFastaFile.add_argument('-l', '--length', type=int, help='maximum \
+                                   length of allowed short names in the lookup table. \
+                                   Default=9.', default=9)
     parser_renameFastaFile.set_defaults(func=renameFastaFile)
 
 
-    # ---------------- #
-    # hmmMarkerScanner #
-    # ---------------- #
-    hmmMarkerScanner_desc="scan markers using hmmsearch, for each fasta file in \
+    # ------------------------ #
+    # AMPHORE2HmmMarkerScanner #
+    # ------------------------ #
+    AMPHORE2HmmMarkerScanner_desc="scan markers using hmmsearch, for each fasta file in \
                                    given folder, a python implementation of AMPHORE2."
-    parser_hmmMarkerScanner = subparsers.add_parser('hmmMarkerScanner',
+    parser_AMPHORE2HmmMarkerScanner = subparsers.add_parser('AMPHORE2HmmMarkerScanner',
                                    parents=[parent_parser],
-                                   help=hmmMarkerScanner_desc,
-                                   description=hmmMarkerScanner_desc)
-    parser_hmmMarkerScanner.add_argument("inputFastaFolder",
+                                   help=AMPHORE2HmmMarkerScanner_desc,
+                                   description=AMPHORE2HmmMarkerScanner_desc)
+    parser_AMPHORE2HmmMarkerScanner.add_argument("inputFastaFolder",
                                    help="input folder that contains all genome \
                                    fasta files")
-    parser_hmmMarkerScanner.add_argument("inputMarkerFile",
+    parser_AMPHORE2HmmMarkerScanner.add_argument("inputMarkerFile",
                                    help='input marker file that contains hmm models')
-    parser_hmmMarkerScanner.add_argument('-e', '--evalue', default=1e-7,
+    parser_AMPHORE2HmmMarkerScanner.add_argument('-e', '--evalue', default=1e-7,
                                    help="evalue cutoff, default=1e-7")
-    parser_hmmMarkerScanner.add_argument('-o', '--outdir',
+    parser_AMPHORE2HmmMarkerScanner.add_argument('-o', '--outdir',
                                    help="output directory, default='ScannedMarkers'",
                                    default="ScannedMarkers")
-    parser_hmmMarkerScanner.add_argument('-f', '--force',
+    parser_AMPHORE2HmmMarkerScanner.add_argument('-f', '--force',
                                    help="force to override previous result?")
-    parser_hmmMarkerScanner.set_defaults(func=hmmMarkerScanner)
+    parser_AMPHORE2HmmMarkerScanner.set_defaults(func=AMPHORE2HmmMarkerScanner)
 
 
     # -------------------- #
@@ -1395,6 +1624,79 @@ def main():
     parser_replaceNameInTree.set_defaults(func=replaceNameInTree)
 
 
+    # ----------- #
+    # runProdigal #
+    # ----------- #
+    parser_runProdigal = subparsers.add_parser('runProdigal', parents=[parent_parser],
+                                   help='wrapper for running prodigal',
+                                   description='wrapper for running runProdigal')
+    parser_runProdigal.add_argument('input_file_or_folder', help='input file or folder')
+    parser_runProdigal.add_argument('-o', '--outdir', help='output directory, default=\
+                                    ./prodigalOutput', default='prodigalOutput')
+    parser_runProdigal.add_argument('-a', '--not_write_proteins', action='store_true',
+                                    help='do not write predicted proteins?')
+    parser_runProdigal.add_argument('-d', '--not_write_DNAs', action='store_true',
+                                    help='do not write nucleotide sequences of predicted proteins?')
+    parser_runProdigal.add_argument('-f', '--format', choices=['gbk', 'gff'], help='output format, \
+                                   for gene annotations, can be gff or gbk, default is gff',
+                                   default='gff')
+    parser_runProdigal.add_argument('-g', type=int, help='specify a translation table to use, default=11',
+                                    default=11)
+    parser_runProdigal.add_argument('-s', '--suffix', help='if the input is a folder, only files\
+                                    with this suffix will be processed. default=.fa',
+                                    default='.fa')
+    parser_runProdigal.add_argument('-m', action='store_true', help='Treat runs of N as masked sequence; \
+                                    do not build genes across them.')
+    parser_runProdigal.add_argument('-c', action='store_true', help='Closed ends. \
+                                    Do not allow genes to run off edges.')
+    parser_runProdigal.add_argument('-n', action='store_true', help='Bypass Shine-Dalgarno\
+                                    trainer and force a full motif scan.')
+    parser_runProdigal.add_argument('-r', '--prodigal', help='path to prodigal excutable, \
+                                   default=~/Software/Module_Annotation/prodigal/prodigal',
+                                   default='/home/hou/Software/Module_Annotation/prodigal/prodigal')
+    parser_runProdigal.set_defaults(func=runProdigal)
+
+
+    # ------------ #
+    # runHmmsearch #
+    # ------------ #
+    parser_runHmmsearch = subparsers.add_parser('runHmmsearch', parents=[parent_parser],
+                                   help='wrapper for running hmmsearch',
+                                   description='wrapper for running runHmmsearch')
+    parser_runHmmsearch.add_argument('input_hmm_file', help='input hmm file')
+    parser_runHmmsearch.add_argument('input_file_or_folder', help='input file or folder')
+    parser_runHmmsearch.add_argument('-o', '--outdir', help='output directory, default=\
+                                    ./hmmsearchOutput', default='hmmsearchOutput')
+    parser_runHmmsearch.add_argument('-s', '--suffix', help='if the input is a folder, only files\
+                                    with this suffix will be processed. default=.faa',
+                                    default='.faa')
+    parser_runHmmsearch.add_argument('-e', '--evalue', type=float,
+                                     help='maximum sequence E-value threshold to \
+                                     report a hit in the output, default=1e-7',
+                                     default=1e-7)
+    parser_runHmmsearch.add_argument('-m', '--dom_evalue', type=float,
+                                     help='maximum domain E-value threshold to \
+                                     report a hit in the output, default=1e-7',
+                                     default=1e-7)
+    parser_runHmmsearch.add_argument('-t', '--not_write_tblout', action='store_true',
+                                     help='do not write table of per-sequence hits to file')
+    parser_runHmmsearch.add_argument('-d', '--not_write_domtblout', action='store_true',
+                                     help='do not write table of per-domain hits to file')
+    parser_runHmmsearch.add_argument('-f', '--not_write_pfamtblout', action='store_true',
+                                     help=' do not write table of hits and domains to file \
+                                     in Pfam format')
+    parser_runHmmsearch.add_argument('--acc', action='store_true', help='prefer accessions\
+                                     over names in output')
+    parser_runHmmsearch.add_argument('--noali', action='store_true', help='do not output \
+                                     alignments, so output is smaller')
+    parser_runHmmsearch.add_argument('--cpu', type=int, help='number of CPU to use, \
+                                      default=10', default=10)
+    parser_runHmmsearch.add_argument('-r', '--hmmsearch', help='path to hmmsearch excutable, \
+                                   default=~/Software/Module_Annotation/hmmer/hmmer-3.1b2-linux-intel-x86_64/binaries/hmmsearch',
+                                   default='/home/hou/Software/Module_Annotation/hmmer/hmmer-3.1b2-linux-intel-x86_64/binaries/hmmsearch')
+    parser_runHmmsearch.set_defaults(func=runHmmsearch)
+
+
     # ----------------------- #
     # parse arguments and run #
     # ----------------------- #
@@ -1408,4 +1710,4 @@ def main():
     args.func(args)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
