@@ -377,6 +377,39 @@ def mergeGenbankGenomes(args):
                         print "No genome fna was found for %s"%genome_name
 
 
+def extractGenbankProteins(args):
+    """ given the genbank genome records downloaded using getGenomesFromGenbank,
+        extract the protein records from each genome subfolder, copy them to the
+        specified folder.
+    """
+    input_folder = args.input_GenbankGenomes
+    output_folder = args.outdir
+
+    subprocess.check_call(['mkdir', '-p', output_folder])
+
+    # input folder has a lot of subfolders, each subfolder contains its genome information
+    for folder in os.listdir(input_folder):
+
+        # take the fodler name as its genome name
+        genome_name = folder
+        print "[extractGenbankProteins]: Extracting genome proteins: "+genome_name
+
+        output_file = os.path.join(output_folder, genome_name+".faa")
+        for f in os.listdir(os.path.join(input_folder, folder)):
+            if f.endswith("_protein.faa.gz"):
+                gz_faa = os.path.join(input_folder, folder, f)
+                try:
+                    with gzip.open(gz_faa, "r") as ih, open(output_file, "w") as oh:
+                        for line in ih:
+                            oh.write(line)
+                except Exception as e:
+                    err = "[extractGenbankProteins]: Error raised: %s"%e
+                    raise SubCommandError(err)
+            else:
+                print "[extractGenbankProteins]: No protein file was found for %s"%genome_name
+                continue
+
+
 def renameFastaFile(args):
     """given an input folder with fasta files inside, rename each fasta file and
        it's header name, accroding to the lookup table
@@ -1149,6 +1182,72 @@ def runProdigal(args):
                                 write_proteins, write_DNAs, m, c, n)
 
 
+def construct_prokka_cmds(prokka, input_fasta, outdir, output_prefix,
+                            locustag="PROKKA", increment=1,
+                            kingdom="Bacteria", cpu=8,
+                            addgenes=True, addmrna=False, force=True, ignoreError=False,
+                             *args, **kwargs):
+    """ construct prokka commands
+    """
+    template = "%s %s --outdir %s --prefix %s \
+    --cpus %d --locustag %s --kingdom %s --increment %d"%(prokka, input_fasta, outdir, output_prefix,
+    cpu, locustag, kingdom, increment)
+
+    command = template.split(" ")
+    if addgenes:
+        command.extend(['--addgenes'])
+    if addmrna:
+        command.extend(['--addmrna'])
+    if force:
+        command.extend(['--force'])
+    try:
+        p1 = subprocess.Popen(command)
+        p1.wait()
+    except Exception as e:
+        err = "[runProkka]: Error raised when running prokka:%s"%e
+        if ignoreError:
+            print err
+        else:
+            raise SubCommandError(err)
+
+
+def runProkka(args):
+    """ wrapper function of prokka
+    """
+    prokka = args.prokka
+    input_file_or_folder = args.input_file_or_folder
+    outdir = args.outdir
+    suffix = args.suffix
+    cpu = args.cpu
+    addgenes = not args.nogenes
+    addmrna = args.addmrna
+    locustag = args.locustag
+    increment = args.increment
+    kingdom = args.kingdom
+    force = not args.donotforce
+    ignoreError = args.ignoreError
+
+    if os.path.isdir(input_file_or_folder):
+        for f in os.listdir(input_file_or_folder):
+            if f.endswith(suffix):
+                if not args.prefix:
+                    prefix = os.path.splitext(f)[0]
+
+                # run prokka
+                input_fasta = os.path.join(input_file_or_folder, f)
+                construct_prokka_cmds(prokka, input_fasta, outdir, prefix,
+                                            locustag, increment,
+                                            kingdom, cpu, addgenes, addmrna, force, ignoreError)
+    else:
+        if not args.prefix:
+            basename = os.path.basename(input_file_or_folder)
+            prefix = os.path.splitext(basename)[0]
+        # run prokka
+        input_fasta = input_file_or_folder
+        construct_prokka_cmds(prokka, input_fasta, outdir, prefix,
+                                    locustag, increment,
+                                    kingdom, cpu, addgenes, addmrna, force, ignoreError)
+
 def construct_hmmsearch_cmds(hmmsearch, hmm_file, input_fasta, output_prefix,
                             evalue=1e-7, dom_evalue=1e-7,
                             write_tblout=None, write_domtblout=None,
@@ -1313,6 +1412,21 @@ def main():
                                    default="MergedGenbankGenomes")
     parser_mergeGenbankGenomes.set_defaults(func=mergeGenbankGenomes)
 
+    # ---------------------- #
+    # extractGenbankProteins #
+    # ---------------------- #
+    extractGenbankProteins_desc="extract *_protein.faa.gz file from each genome subfolder \
+                                 of downloaded GenbankGenomes into one folder."
+    parser_extractGenbankProteins = subparsers.add_parser('extractGenbankProteins',
+                                 parents=[parent_parser],
+                                 help=extractGenbankProteins_desc,
+                                 description=extractGenbankProteins_desc)
+    parser_extractGenbankProteins.add_argument('input_GenbankGenomes', help="\
+                                 input directory path to GenbankGenomes")
+    parser_extractGenbankProteins.add_argument('-o', '--outdir',
+                                   help="output directory, default='extractedGenbankProteins'",
+                                   default="extractedGenbankProteins")
+    parser_extractGenbankProteins.set_defaults(func=extractGenbankProteins)
 
     # ------------------------- #
     # mergeMultipleFastaRecords #
@@ -1656,6 +1770,42 @@ def main():
                                    default='/home/hou/Software/Module_Annotation/prodigal/prodigal')
     parser_runProdigal.set_defaults(func=runProdigal)
 
+    # --------- #
+    # runProkka #
+    # --------- #
+    parser_runProkka = subparsers.add_parser('runProkka', parents=[parent_parser],
+                                   help='wrapper for running prokka',
+                                   description='wrapper for running prokka')
+    parser_runProkka.add_argument('input_file_or_folder', help='input file or folder')
+    parser_runProkka.add_argument('-o', '--outdir', help='output directory, default=\
+                                    ./prokkaOutput', default='prokkaOutput')
+    parser_runProkka.add_argument('-s', '--suffix', help='if the input is a folder, only files\
+                                    with this suffix will be processed. default=.fa',
+                                    default='.fa')
+    parser_runProkka.add_argument('-c', '--cpu', type=int,
+                                    help='Number of CPUs to use, [0=all] default=8.',
+                                    default=8)
+    parser_runProkka.add_argument('--nogenes', action='store_true',
+                                    help="Do not add 'gene' features for each 'CDS' feature")
+    parser_runProkka.add_argument('--donotforce', action='store_true',
+                                    help="Do not force remove existing folders")
+    parser_runProkka.add_argument('--addmrna', action='store_true',
+                                    help="Add 'mRNA' features for each 'CDS' feature (default OFF)")
+    parser_runProkka.add_argument('--locustag',
+                                    help="Locus tag prefix (default 'PROKKA').",
+                                    default='PROKKA')
+    parser_runProkka.add_argument('--increment', type = int,
+                                    help="Locus tag counter increment (default '1').",
+                                    default=1)
+    parser_runProkka.add_argument('--kingdom',
+                                    help="Annotation mode: Archaea|Bacteria|Mitochondria|Viruses (default 'Bacteria')",
+                                    default='Bacteria')
+    parser_runProkka.add_argument('--ignoreError', action="store_true",
+                                    help="ignore Errors raised when annotating multiple genomes?")
+    parser_runProkka.add_argument('-r', '--prokka', help='path to prokka excutable, \
+                                   default=~/Software/Module_Annotation/prokka/prokka-1.12/bin/prokka',
+                                   default='/home/hou/Software/Module_Annotation/prokka/prokka-1.12/bin/prokka')
+    parser_runProkka.set_defaults(func=runProkka)
 
     # ------------ #
     # runHmmsearch #
