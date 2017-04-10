@@ -332,16 +332,29 @@ def generateShortNameTable(args):
 
     # read in genome assembly report file
     with open(input_file, "r") as ih, open(output_file, "w") as oh:
-        _ = ih.readline()
+        oh.write("#filename\tshortname\tgenus\tstrain\n")
+        header = ih.readline().strip().split("\t")
+        genus_pos = header.index("Organism/Name")
+        strain_pos = header.index("Strain")
+        accession_pos = header.index("Assembly")
+        Genbank_FTP_pos = header.index("GenBank FTP")
         for line in ih:
             line = line.strip().split("\t")
-            sciName = line[0].strip()
-            sciName = _clean_name(sciName)
-            accession = line[7].strip()
-            sciName += "_" + accession
-            accession += suffix
+            genus_full = line[genus_pos].strip().split(" ")[0].lstrip("[").rstrip("]")
+            genus_short = genus_full[:5]
+            accession = line[accession_pos].strip()
+            assemblyID = line[Genbank_FTP_pos].strip().split("_")[-1] if "ASM" in line[-1].strip().split("_")[-1] else accession
+            strain = line[strain_pos].strip().replace(" ", "")
 
-            oh.write(accession+"\t"+sciName+"\n")
+            if strain:
+                sciName = genus_short+"_"+strain+"_"+assemblyID
+            else:
+                sciName = genus_short+"_"+assemblyID
+            sciName = _clean_name(sciName)
+
+            accession += "."+suffix
+
+            oh.write(accession+"\t"+sciName+"\t"+genus_full+"\t"+strain+"\n")
 
 
 def mergeGenbankGenomes(args):
@@ -375,6 +388,41 @@ def mergeGenbankGenomes(args):
                         oh.write(str(genome_seq)+"\n")
                     else:
                         print "No genome fna was found for %s"%genome_name
+
+
+def extractGenbankGenomicFna(args):
+    """ given the genbank genome records downloaded using getGenomesFromGenbank,
+        extract the *_genomic.fna records from each genome subfolder, copy them to the
+        specified folder.
+    """
+    input_folder = args.input_GenbankGenomes
+    output_folder = args.outdir
+
+    subprocess.check_call(['mkdir', '-p', output_folder])
+
+    # input folder has a lot of subfolders, each subfolder contains its genome information
+    for folder in os.listdir(input_folder):
+
+        # take the fodler name as its genome name
+        genome_name = folder
+        print "[extractGenbankGenomicFna]: Extracting genomic fna: "+genome_name
+
+        output_file = os.path.join(output_folder, genome_name+".fna")
+        for f in os.listdir(os.path.join(input_folder, folder)):
+            if f.endswith("_genomic.fna.gz") and ("_from_" not in f):
+                gz_fna = os.path.join(input_folder, folder, f)
+                #print(gz_fna)
+                try:
+                    with gzip.open(gz_fna, "r") as ih, open(output_file, "w") as oh:
+                        for line in ih:
+                            oh.write(line)
+                except Exception as e:
+                    err = "[extractGenbankGenomicFna]: Error raised: %s"%e
+                    raise SubCommandError(err)
+                break
+        else:
+            print "[extractGenbankGenomicFna]: No protein file was found for %s"%genome_name
+            continue
 
 
 def extractGenbankProteins(args):
@@ -1183,8 +1231,8 @@ def runProdigal(args):
 
 
 def construct_prokka_cmds(prokka, input_fasta, outdir, output_prefix,
-                            locustag="PROKKA", increment=1,
-                            kingdom="Bacteria", cpu=8,
+                            locustag="PROKKA", genus="genus", species="species",
+                            strain="strain", increment=1, kingdom="Bacteria", cpu=8,
                             addgenes=True, addmrna=False, force=True, ignoreError=False,
                              *args, **kwargs):
     """ construct prokka commands
@@ -1194,6 +1242,12 @@ def construct_prokka_cmds(prokka, input_fasta, outdir, output_prefix,
     cpu, locustag, kingdom, increment)
 
     command = template.split(" ")
+    if genus != "genus":
+        command.extend(['--genus', genus, '--usegenus'])
+    if species != "species":
+        command.extend(['--species', species])
+    if strain != "strain":
+        command.extend(['--strain', strain])
     if addgenes:
         command.extend(['--addgenes'])
     if addmrna:
@@ -1217,6 +1271,7 @@ def runProkka(args):
     prokka = args.prokka
     input_file_or_folder = args.input_file_or_folder
     outdir = args.outdir
+    parameter_file = args.parameter_file
     suffix = args.suffix
     cpu = args.cpu
     addgenes = not args.nogenes
@@ -1227,26 +1282,69 @@ def runProkka(args):
     force = not args.donotforce
     ignoreError = args.ignoreError
 
+    # read in parameter_file, if exists
+    file2parameters = {}
+    if parameter_file:
+        with open(parameter_file, "r") as ih:
+            header = ih.readline().lstrip("#").strip().split("\t")
+            filename_pos = header.index("filename")
+            genus_pos = header.index("genus")
+            strain_pos = header.index("strain")
+            for line in ih:
+                line = line.strip().split("\t")
+                filename = line[filename_pos]
+                genus = line[genus_pos]
+                strain = line[strain_pos]
+                if filename not in file2parameters:
+                    file2parameters[filename] = {"filename":filename,
+                                                 "genus":genus,
+                                                 "strain":strain}
+                else:
+                    print("[runProkka]: found sequence %s more than once!"%filename)
+                    continue
+
     if os.path.isdir(input_file_or_folder):
         for f in os.listdir(input_file_or_folder):
             if f.endswith(suffix):
                 if not args.prefix:
                     prefix = os.path.splitext(f)[0]
+                    if f in file2parameters:
+                        genus = file2parameters[f].get('genus', 'genus')
+                        species = file2parameters[f].get('species', 'species')
+                        strain = file2parameters[f].get('strain', 'strain')
+                        locustag = strain
+                    else:
+                        locustag = prefix
+                        genus = "genus"
+                        species = "species"
+                        strain = "strain"
 
                 # run prokka
                 input_fasta = os.path.join(input_file_or_folder, f)
                 construct_prokka_cmds(prokka, input_fasta, outdir, prefix,
-                                            locustag, increment,
-                                            kingdom, cpu, addgenes, addmrna, force, ignoreError)
+                                      locustag, genus, species, strain, increment,
+                                      kingdom, cpu, addgenes, addmrna, force, ignoreError)
     else:
         if not args.prefix:
             basename = os.path.basename(input_file_or_folder)
             prefix = os.path.splitext(basename)[0]
+
+            if f in file2parameters:
+                genus = file2parameters[f].get('genus', 'genus')
+                species = file2parameters[f].get('species', 'species')
+                strain = file2parameters[f].get('strain', 'strain')
+                locustag = strain
+            else:
+                locustag = prefix
+                genus = "genus"
+                species = "species"
+                strain = "strain"
+
         # run prokka
         input_fasta = input_file_or_folder
         construct_prokka_cmds(prokka, input_fasta, outdir, prefix,
-                                    locustag, increment,
-                                    kingdom, cpu, addgenes, addmrna, force, ignoreError)
+                              locustag, genus, species, strain, increment,
+                              kingdom, cpu, addgenes, addmrna, force, ignoreError)
 
 def construct_hmmsearch_cmds(hmmsearch, hmm_file, input_fasta, output_prefix,
                             evalue=1e-7, dom_evalue=1e-7,
@@ -1411,6 +1509,24 @@ def main():
                                    help="output directory, default='MergedGenbankGenomes'",
                                    default="MergedGenbankGenomes")
     parser_mergeGenbankGenomes.set_defaults(func=mergeGenbankGenomes)
+
+
+    # ------------------------ #
+    # extractGenbankGenomicFna #
+    # ------------------------ #
+    extractGenbankGenomicFna_desc="extract *_genomic.fna.gz file from each genome subfolder \
+                                 of downloaded GenbankGenomes into one folder."
+    parser_extractGenbankGenomicFna = subparsers.add_parser('extractGenbankGenomicFna',
+                                 parents=[parent_parser],
+                                 help=extractGenbankGenomicFna_desc,
+                                 description=extractGenbankGenomicFna_desc)
+    parser_extractGenbankGenomicFna.add_argument('input_GenbankGenomes', help="\
+                                 input directory path to GenbankGenomes")
+    parser_extractGenbankGenomicFna.add_argument('-o', '--outdir',
+                                   help="output directory, default='extractedGenbankGenomicFna'",
+                                   default="extractedGenbankGenomicFna")
+    parser_extractGenbankGenomicFna.set_defaults(func=extractGenbankGenomicFna)
+
 
     # ---------------------- #
     # extractGenbankProteins #
@@ -1779,6 +1895,8 @@ def main():
     parser_runProkka.add_argument('input_file_or_folder', help='input file or folder')
     parser_runProkka.add_argument('-o', '--outdir', help='output directory, default=\
                                     ./prokkaOutput', default='prokkaOutput')
+    parser_runProkka.add_argument('-a', '--parameter_file', help="tab-deliminated "\
+                                  "parameter file, contains fileanme, genus and strain")
     parser_runProkka.add_argument('-s', '--suffix', help='if the input is a folder, only files\
                                     with this suffix will be processed. default=.fa',
                                     default='.fa')
@@ -1792,7 +1910,8 @@ def main():
     parser_runProkka.add_argument('--addmrna', action='store_true',
                                     help="Add 'mRNA' features for each 'CDS' feature (default OFF)")
     parser_runProkka.add_argument('--locustag',
-                                    help="Locus tag prefix (default 'PROKKA').",
+                                    help="Locus tag prefix (default 'PROKKA' or filestem of \
+                                    input files when input is a folder).",
                                     default='PROKKA')
     parser_runProkka.add_argument('--increment', type = int,
                                     help="Locus tag counter increment (default '1').",

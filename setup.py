@@ -1,25 +1,23 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+    Setup file for phyloutils.
 
-from setuptools import setup 
+    This file was generated with PyScaffold 2.5.7, a tool that easily
+    puts up a scaffold for your new Python project. Learn more under:
+    http://pyscaffold.readthedocs.org/
+"""
 
-setup(
-    name='phyloutils', 
-    scripts=['phyloutils'], 
-    version='0.0.1',
-    description='A set of subcommands for phylogenetic computation', 
-    author='Shengwei Hou', 
-    author_email='housw2010[at]gmail.com', 
-    url='https://github.com/housw/phyloutils', 
-    license="GPLv3+", 
-    classifiers=[
-        'Programming Language :: Python', 
-        'Programming Language :: Python :: 2.7', 
-        'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)', 
-        'Operating System :: OS Independent', 
-        'Development Status :: 1 - Planning', 
-        'Environment :: Console', 
-        'Intended Audience :: Science/Research', 
-        'Topic :: Scientifc/Enginerring'
-    ]
-     
-)
+import sys
+from setuptools import setup
+
+
+def setup_package():
+    needs_sphinx = {'build_sphinx', 'upload_docs'}.intersection(sys.argv)
+    sphinx = ['sphinx'] if needs_sphinx else []
+    setup(setup_requires=['six', 'pyscaffold>=2.5a0,<2.6a0'] + sphinx,
+          use_pyscaffold=True)
+
+
+if __name__ == "__main__":
+    setup_package()
