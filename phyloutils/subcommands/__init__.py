@@ -22,6 +22,8 @@ commands = ['getGenomesFromGenbank', 'mergeGenbankGenomes',
 
 def itermodules(root=__name__):
     for command in commands:
+        # yield command and module.command 
+        # https://python-reference.readthedocs.io/en/latest/docs/functions/__import__.html
         yield (command, __import__('%s.%s' % (root, command), fromlist=['command']))
 
 
