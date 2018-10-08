@@ -1,0 +1,17 @@
+Metadata-Version: 1.2
+Name: phyloutils
+Version: 0.0.1
+Summary: A set of scripts for phylogenetic manipulations.
+Home-page: http://pypi.python.org/pypi/phyloutils/
+Author: Shengwei Hou
+Author-email: housw2010@gmail.com
+Maintainer: Shengwei Hou
+Maintainer-email: housw2010@gmail.com
+License: GPLv3
+Description: UNKNOWN
+Platform: UNKNOWN
+Classifier: Development Status :: 4 - Beta
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
+Classifier: Natural Language :: English
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Topic :: Scientific/Engineering :: Bio-Informatics

@@ -1,0 +1,5 @@
+GenBank Assembly ID (Accession.version)	GenBank release ID	RefSeq Assembly ID (Accession.version)	RefSeq release ID 	
+GCA_002730245.1	5584188	N/A	N/A	
+GCA_002732835.1	5586768	N/A	N/A	
+GCA_000012345.1	13148	GCF_000012345.1	33448	
+GCA_000153525.1	178038	GCF_000153525.1	178058	

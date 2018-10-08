@@ -49,7 +49,7 @@ def runRAxML_rapid_bootstrap(raxml, alignment, model, bootstraps, outgroup,
     if partition:
         command.extend(['-q', partition])
     try:
-        print  " ".join(command)
+        _logger.info(" ".join(command))
         p = subprocess.Popen(command)
         p.wait()
     except Exception as e:

@@ -2,16 +2,13 @@
 extract *_genomic.fna.gz file from each genome subfolder of downloaded GenbankGenomes into one folder.
 """
 
-import argparse
 import logging
-import urllib2
-import ftputil
 import os
 import subprocess
 import gzip
 
-_logger = logging.getLogger(__name__)
 
+_logger = logging.getLogger(__name__)
 
 
 def add_arguments(parser):

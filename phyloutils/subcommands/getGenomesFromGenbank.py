@@ -5,12 +5,12 @@ download genbank genome sequences from NCBI Genome Assembly Report via ftp.
 
 import argparse
 import logging
-import urllib2
+import urllib.request
 import ftputil
 import os
 import subprocess
 from . import SubCommandError
-
+from phyloutils.main import IndexNotFoundError
 
 _logger = logging.getLogger(__name__)
 
@@ -61,19 +61,48 @@ def command(args):
         # read assembly summary from genbank, store ftp path for each assembly
         ID2path = {}
         assembly_summary_genbank = "ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/assembly_summary_genbank.txt"
-        response = urllib2.urlopen(assembly_summary_genbank)
-        for line in response:
+        #response = urllib2.urlopen(assembly_summary_genbank)
+        request = urllib.request.Request(assembly_summary_genbank)
+        assembly_records = urllib.request.urlopen(request).read().decode('utf-8').split("\n")
+        assembly_summary_header = assembly_records[1].lstrip('# ').split('\t')
+        try:
+            assembly_accession_col = assembly_summary_header.index('assembly_accession')
+        except Exception as e:
+            _logger.warning("assembly_accession wasn't found in the header of assembly_summary_genbank.txt, use 0 instead!")
+            assembly_accession_col = 0
+        try:
+            assembly_ftp_path_col =  assembly_summary_header.index('ftp_path')
+        except Exception as e:
+            _logger.warning("ftp_path wasn't found in the header of assembly_summary_genbank.txt, use -3 instead!")
+            assembly_ftp_path_col = -3
+
+        for line in assembly_records:
+            # _logger.debug(response)
             # consume comments
             if line.startswith("#"):
                 continue
-            sline = line.strip().split("\t")
-            ID = sline[0].strip()
-            path = sline[-1].strip()
-            if path:
+            sline = line.strip().split('\t')
+            ID = sline[assembly_accession_col].strip()
+            path = None
+            try:
+                path = sline[assembly_ftp_path_col].strip()
+            except IndexError as e:
+                for item in sline[::-1]:
+                    if item.startswith('ftp://ftp.ncbi.nlm.nih.gov/genomes/all'):
+                        path = item
+                        _logger.warning("the default {col} column is not a valid ftp address, "
+                                        "the ftp_path has be determined as {path} by scanning the report".format(
+                            col=assembly_ftp_path_col, path=item))
+                        break
+
+            if not path:
+                _logger.warning("the ftp_path for assembly {ID} was not found.".format(ID=ID))
+            else:
                 ID2path[ID] = path
+        #print(ID2path)
 
         # read input genbank ID file, get IDs
-        assembly2ftp = {} # {genbank_ID: ftp}
+        assembly2ftp = {}  # {genbank_ID: ftp}
         with open(input_file, "r") as ih:
             for line in ih:
                 if line.startswith("GenBank Assembly ID") or line.startswith('#'):
@@ -81,7 +110,7 @@ def command(args):
                 line = line.strip().split("\t")
                 assembly = line[0].strip()
                 ftp = ID2path[assembly]
-                _logger.info("%s ==> %s"%(assembly, ftp))
+                _logger.info("%s ==> %s" % (assembly, ftp))
                 assembly2ftp[assembly] = ftp
 
         download_assemblies(assembly2ftp, args.outdir)
@@ -137,38 +166,39 @@ def download_assemblies(assembly2ftp, outdir):
         subprocess.check_call(['mkdir', '-p', local_folder])
 
         try:
-            ftp_folder = urllib2.urlopen(ftp_path)
+            #ftp_folder = urllib2.urlopen(ftp_path)
+            request = urllib.request.Request(ftp_path)
+            ftp_folder = urllib.request.urlopen(request).read().decode('utf-8')
         except ValueError as e:
             _logger.error("ERROR: can NOT download %s using address: %s"%(assembly, ftp_path))
             _logger.error("The error message is : %s"%e)
             continue
-        for f in ftp_folder:
-            # here convert the html content to text, and split into lines
-            for line in html2text(f).split("\n"):
-                line = line.strip().split()
-                if len(line) <=1:
-                    continue
-                remote_file = line[-1]
-                if remote_file.startswith(remote_folder) and remote_file.endswith(".gz"):
-                    _logger.info("Downloading %s ..."%remote_file)
-                    local_file = os.path.join(local_folder, remote_file)
-                    try:
-                        success = False
-                        tries = 0
-                        cmd="wget %s -O %s"%(os.path.join(ftp_path, remote_file), local_file)
-                        while not success:
-                            tries += 1
-                            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            stdout, stderr = p.communicate()
-                            if int(p.returncode) == 0:
-                                success = True
-                            if tries >=10:
-                                _logger.error("ERROR: %s was NOT downloaded after 10 tries!"%remote_file)
-                                break
-                    except Exception as e:
-                        _logger.error("ERROR: CANNOT DOWNLOAD %s"%remote_file)
-                        _logger.error("ERROR: MESSAGE IS: %s"%e)
-                        raise SubCommandError(e)
+
+        for f in ftp_folder.split('\n'):
+                # print(f)
+                f = f.split()
+                if len(f) >= 1:
+                    remote_file = f[-1]
+                    if remote_file.startswith(remote_folder) and remote_file.endswith(".gz"):
+                        _logger.info("Downloading %s ..."%remote_file)
+                        local_file = os.path.join(local_folder, remote_file)
+                        try:
+                            success = False
+                            tries = 0
+                            cmd="wget %s -O %s"%(os.path.join(ftp_path, remote_file), local_file)
+                            while not success:
+                                tries += 1
+                                p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout, stderr = p.communicate()
+                                if int(p.returncode) == 0:
+                                    success = True
+                                if tries >=10:
+                                    _logger.error("ERROR: %s was NOT downloaded after 10 tries!"%remote_file)
+                                    break
+                        except Exception as e:
+                            _logger.error("ERROR: CANNOT DOWNLOAD %s"%remote_file)
+                            _logger.error("ERROR: MESSAGE IS: %s"%e)
+                            raise SubCommandError(e)
 
 
 def html2text(strText):

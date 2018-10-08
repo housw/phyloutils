@@ -19,11 +19,5 @@ for phylogenetic computation. Currently included subcommands/scripts are
 ``runPartitionFinderProtein``, ``runRAxML``, ``replaceNameInTree``,
 ``runProdigal``, ``runProkka``, ``runHmmsearch``. 
 
-This package is still under development, please use with patience. 
+This package is still under active development, please use with your own risk. 
 
-
-Note
-====
-
-This project has been set up using PyScaffold 2.5.7. For details and usage
-information on PyScaffold see http://pyscaffold.readthedocs.org/.
