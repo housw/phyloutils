@@ -19,5 +19,5 @@ for phylogenetic computation. Currently included subcommands/scripts are
 ``runPartitionFinderProtein``, ``runRAxML``, ``replaceNameInTree``,
 ``runProdigal``, ``runProkka``, ``runHmmsearch``. 
 
-This package is still under active development, please use with your own risk. 
+This package is still under active development, use at your own risk. 
 
