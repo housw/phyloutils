@@ -101,7 +101,6 @@ def command(args):
                 ID2path[ID] = path
         #print(ID2path)
 
-
         # read input genbank ID file, get IDs
         assembly2ftp = {}  # {genbank_ID: ftp}
         with open(input_file, "r") as ih:

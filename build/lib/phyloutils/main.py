@@ -52,7 +52,7 @@ def setup_logging(loglevel):
         'debug'   : logging.DEBUG,
     }.get(loglevel, logging.DEBUG)
 
-    logformat = "[%(asctime)s] %(levelname)s:%(name)s:%(message)s"
+    logformat = "[%(asctime)s] [%(levelname)s] %(name)s:%(message)s"
 
     logging.basicConfig(level=loglevel, file=sys.stdout,
                         format=logformat, datefmt="%Y-%m-%d %H:%M:%S")
